@@ -6,12 +6,12 @@ Description:    Checks for MyNewActivity-<myWhooshVersion>.fit
                 Adds avg power and heartrade
                 Removes temperature
                 Creates backup for the file with a timestamp as a suffix
-Credits:        Garth by matin - for authenticating and uploading with 
+Credits:        Garth by matin - for authenticating and uploading with
                 Garmin Connect.
                 https://github.com/matin/garth
                 Fit_tool by mtucker - for parsing the fit file.
                 https://bitbucket.org/stagescycling/python_fit_tool.git/src
-                mw2gc by embeddedc - used as an example to fix the avg's. 
+                mw2gc by embeddedc - used as an example to fix the avg's.
                 https://github.com/embeddedc/mw2gc
 """
 import os
@@ -21,12 +21,13 @@ import sys
 import logging
 import re
 from typing import List
-import tkinter as tk
-from tkinter import filedialog
+#import tkinter as tk
+#from tkinter import filedialog
 from datetime import datetime
 from getpass import getpass
 from pathlib import Path
 import importlib.util
+from fit_tool.profile.messages.file_id_message import FileIdMessage
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -136,7 +137,7 @@ except ImportError as e:
 TOKENS_PATH = SCRIPT_DIR / '.garth'
 FILE_DIALOG_TITLE = "MyWhoosh2Garmin"
 # Fix for https://github.com/JayQueue/MyWhoosh2Garmin/issues/2
-MYWHOOSH_PREFIX_WINDOWS = "MyWhooshTechnologyService." 
+MYWHOOSH_PREFIX_WINDOWS = "MyWhooshTechnologyService."
 
 
 def get_fitfile_location() -> Path:
@@ -174,7 +175,7 @@ def get_fitfile_location() -> Path:
         try:
             base_path = Path.home() / "AppData" / "Local" / "Packages"
             for directory in base_path.iterdir():
-                if (directory.is_dir() and 
+                if (directory.is_dir() and
                         directory.name.startswith(MYWHOOSH_PREFIX_WINDOWS)):
                     target_path = (
                             directory
@@ -202,8 +203,8 @@ def get_fitfile_location() -> Path:
 def get_backup_path(json_file=json_file_path) -> Path:
     """
     This function checks if a backup path already exists in a JSON file.
-    If it does, it returns the stored path. If the file does not exist, 
-    it prompts the user to select a directory via a file dialog, saves 
+    If it does, it returns the stored path. If the file does not exist,
+    it prompts the user to select a directory via a file dialog, saves
     the selected path to the JSON file, and returns it.
 
     Args:
@@ -222,10 +223,11 @@ def get_backup_path(json_file=json_file_path) -> Path:
             logger.error("Invalid backup path stored in JSON.")
             sys.exit(1)
     else:
-        root = tk.Tk()
-        root.withdraw() 
-        backup_path = filedialog.askdirectory(title=f"Select {FILE_DIALOG_TITLE} "
-                                              "Directory")
+        # root = tk.Tk()
+        # root.withdraw()
+        # backup_path = filedialog.askdirectory(title=f"Select {FILE_DIALOG_TITLE} "
+        #                                       "Directory")
+        backup_path = "/Users/jcanton/projects/backups"
         if not backup_path:
             logger.info("No directory selected, exiting.")
             return Path()
@@ -262,8 +264,8 @@ def get_credentials_for_garmin():
 
 def authenticate_to_garmin():
     """
-    Authenticate the user to Garmin by checking for existing tokens and 
-    resuming the session, or prompting for credentials if no session 
+    Authenticate the user to Garmin by checking for existing tokens and
+    resuming the session, or prompting for credentials if no session
     exists or the session is expired.
 
     Returns:
@@ -319,11 +321,11 @@ def append_value(values: List[int], message: object, field_name: str) -> None:
 
 def reset_values() -> tuple[List[int], List[int], List[int], List[int]]:
     """
-    Resets and returns three empty lists for cadence, power 
+    Resets and returns three empty lists for cadence, power
     and heart rate values.
 
     Returns:
-        tuple: A tuple containing three empty lists 
+        tuple: A tuple containing three empty lists
         (cadence, power, and heart rate).
     """
     return  [], [], [], []
@@ -347,6 +349,10 @@ def cleanup_fit_file(fit_file_path: Path, new_file_path: Path) -> None:
 
     for record in fit_file.records:
         message = record.message
+        if isinstance(message, FileIdMessage):
+            # Override manufacturer/product but keep other fields
+            message.manufacturer = 1
+            message.product = 1836
         if isinstance(message, LapMessage):
             append_value(lap_values, message, "start_time")
             append_value(lap_values, message, "total_elapsed_time")
@@ -378,11 +384,11 @@ def cleanup_fit_file(fit_file_path: Path, new_file_path: Path) -> None:
 
 def get_most_recent_fit_file(fitfile_location: Path) -> Path:
     """
-    Returns the most recent .fit file based 
+    Returns the most recent .fit file based
     on versioning in the filename.
     """
     fit_files = fitfile_location.glob("MyNewActivity-*.fit")
-    fit_files = sorted(fit_files, key=lambda f: 
+    fit_files = sorted(fit_files, key=lambda f:
                        tuple(map(int, re.findall(r'(\d+)',
                                                  f.stem.split('-')[-1]))),
                        reverse=True)
@@ -397,14 +403,14 @@ def generate_new_filename(fit_file: Path) -> str:
 
 def cleanup_and_save_fit_file(fitfile_location: Path) -> Path:
     """
-    Clean up the most recent .fit file in a directory and save it 
+    Clean up the most recent .fit file in a directory and save it
     with a timestamped filename.
 
     Args:
         fitfile_location (Path): The directory containing the .fit files.
 
     Returns:
-        Path: The path to the newly saved and cleaned .fit file, 
+        Path: The path to the newly saved and cleaned .fit file,
         or an empty Path if no .fit file is found or if the path is invalid.
     """
     if not fitfile_location.is_dir():
@@ -431,7 +437,7 @@ def cleanup_and_save_fit_file(fitfile_location: Path) -> Path:
     logger.info(f"Cleaning up {new_file_path}.")
 
     try:
-        cleanup_fit_file(fit_file, new_file_path)  
+        cleanup_fit_file(fit_file, new_file_path)
         logger.info(f"Successfully cleaned {fit_file.name} "
                     f"and saved it as {new_file_path.name}.")
         return new_file_path
@@ -463,7 +469,7 @@ def upload_fit_file_to_garmin(new_file_path: Path):
 
 def main():
     """
-    Main function to authenticate to Garmin, clean and save the FIT file, 
+    Main function to authenticate to Garmin, clean and save the FIT file,
     and upload it to Garmin.
 
     Returns:
