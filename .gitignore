@@ -3,3 +3,4 @@
 *.json
 *.lock
 !*.py.lock
+backups/
