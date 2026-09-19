@@ -1,3 +1,11 @@
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#     "requests>=2.32",
+#     "pydantic>=2",
+#     "pydantic-settings>=2",
+# ]
+# ///
 """
 Strava API client for downloading virtual ride activities with 'MyWhoosh' in name.
 
@@ -9,7 +17,6 @@ import os
 import sqlite3
 import requests
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import List, Optional
 from urllib.parse import parse_qs, urlparse
 

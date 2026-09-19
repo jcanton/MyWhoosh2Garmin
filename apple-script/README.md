@@ -5,7 +5,8 @@
   <li>Download MyWhoosh2Garmin-AS.scpt to your filesystem to a folder of your choosing.</li>
   <li>Go to the folder where you downloaded the script via Mac Finder.</li>
   <li>Open the script in the Apple Script Editor and set the property <code>pythonScriptPath</code> to the location where you downloaded the 
-  <code>myWhoosh2Garmin.py</code> script.</li>
+  <code>myWhoosh2Garmin.py</code> script. <code>do shell script</code> runs with a minimal PATH, so <code>uv</code>
+  is called by its full path below; adjust it if <code>which uv</code> reports a different location.</li>
   
 ```
 property targetApp : "MyWhoosh Indoor Cycling App"
@@ -23,7 +24,7 @@ on idle
 end idle
 
 on performActionOnExit()
-	do shell script "python3 " & quoted form of pythonScriptPath
+	do shell script "$HOME/.local/bin/uv run " & quoted form of pythonScriptPath
 end performActionOnExit
 
 on quit

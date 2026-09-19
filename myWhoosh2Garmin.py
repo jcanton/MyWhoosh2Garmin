@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = "==3.13.*"
+# dependencies = [
+#     "garth==0.5.2",
+#     "fit_tool==0.9.16",
+# ]
+# ///
 """
 Script name: myWhoosh2Garmin.py
-Usage: "python3 myWhoosh2Garmin.py"
+Usage: "uv run myWhoosh2Garmin.py"
 Description:    Checks for MyNewActivity-<myWhooshVersion>.fit
                 Adds avg power and heartrade
                 Removes temperature
@@ -16,7 +23,6 @@ Credits:        Garth by matin - for authenticating and uploading with
 """
 import os
 import json
-import subprocess
 import sys
 import logging
 import re
@@ -26,8 +32,18 @@ from typing import List
 from datetime import datetime
 from getpass import getpass
 from pathlib import Path
-import importlib.util
+
+import garth
+from garth.exc import GarthException, GarthHTTPError
+from fit_tool.fit_file import FitFile
+from fit_tool.fit_file_builder import FitFileBuilder
 from fit_tool.profile.messages.file_id_message import FileIdMessage
+from fit_tool.profile.messages.record_message import (
+    RecordMessage,
+    RecordTemperatureField
+)
+from fit_tool.profile.messages.session_message import SessionMessage
+from fit_tool.profile.messages.lap_message import LapMessage
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -39,99 +55,6 @@ file_handler = logging.FileHandler(log_file_path)
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 file_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
-
-
-INSTALLED_PACKAGES_FILE = SCRIPT_DIR / "installed_packages.json"
-
-
-def load_installed_packages():
-    """Load the set of installed packages from a JSON file."""
-    if INSTALLED_PACKAGES_FILE.exists():
-        with INSTALLED_PACKAGES_FILE.open("r") as f:
-            return set(json.load(f))
-    return set()
-
-
-def save_installed_packages(installed_packages):
-    """Save the set of installed packages to a JSON file."""
-    with INSTALLED_PACKAGES_FILE.open("w") as f:
-        json.dump(list(installed_packages), f)
-
-
-def get_pip_command():
-    """Return the pip command if pip is available."""
-    try:
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "--version"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-        )
-        return [sys.executable, "-m", "pip"]
-    except subprocess.CalledProcessError:
-        return None
-
-
-def install_package(package):
-    """Install the specified package using pip."""
-    pip_command = get_pip_command()
-    if pip_command:
-        try:
-            logger.info(f"Installing missing package: {package}.")
-            subprocess.check_call(
-                pip_command + ["install", package]
-            )
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Error installing {package}: {e}.")
-    else:
-        logger.debug("pip is not available. Unable to install packages.")
-
-
-def ensure_packages():
-    """Ensure all required packages are installed and tracked."""
-    required_packages = ["garth", "fit_tool"]
-    installed_packages = load_installed_packages()
-
-    for package in required_packages:
-        if package in installed_packages:
-            logger.info(f"Package {package} is already tracked as installed.")
-            continue
-
-        if not importlib.util.find_spec(package):
-            logger.info(f"Package {package} not found."
-                        "Attempting to install...")
-            install_package(package)
-
-        try:
-            __import__(package)
-            logger.info(f"Successfully imported {package}.")
-            installed_packages.add(package)
-        except ModuleNotFoundError:
-            logger.error(f"Failed to import {package} even "
-                         "after installation.")
-
-    save_installed_packages(installed_packages)
-
-
-ensure_packages()
-
-
-# Imports
-try:
-    import garth
-    from garth.exc import GarthException, GarthHTTPError
-    from fit_tool.fit_file import FitFile
-    from fit_tool.fit_file_builder import FitFileBuilder
-    from fit_tool.profile.messages.file_creator_message import (
-        FileCreatorMessage
-    )
-    from fit_tool.profile.messages.record_message import (
-        RecordMessage,
-        RecordTemperatureField
-    )
-    from fit_tool.profile.messages.session_message import SessionMessage
-    from fit_tool.profile.messages.lap_message import LapMessage
-except ImportError as e:
-    logger.error(f"Error importing modules: {e}")
 
 
 TOKENS_PATH = SCRIPT_DIR / '.garth'

@@ -10,3 +10,11 @@ I did this because we are not allowed to scrape MyWhoosh site. It's in the TOS.
 1. Go to [Strava API settings](https://www.strava.com/settings/api)
 2. Get your Strava cookie and turn it into a cookies.json
 3. To continue, hold on
+
+## Running
+
+```
+uv run main.py
+```
+
+Dependencies are declared at the top of `main.py` and pinned in `main.py.lock`, so `uv` resolves them on the first run.

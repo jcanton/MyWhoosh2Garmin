@@ -10,41 +10,43 @@
 
 <h2>🛠️ Installation Steps:</h2>
 
-<p>1. Download myWhoosh2Garmin.py to your filesystem to a folder or your choosing.</p>
+<p>1. Install <code>uv</code> (if not already installed):</p>
 
-<p>2. Go to the folder where you downloaded the script in a shell.</p>
+- <b>MacOS / Linux:</b>
+
+```
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+- <b>Windows</b> (PowerShell):
+
+```
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+<p>2. Download myWhoosh2Garmin.py to your filesystem to a folder or your choosing.</p>
+
+<p>3. Go to the folder where you downloaded the script in a shell.</p>
 
 - <b>MacOS:</b> Terminal of your choice. 
 - <b>Windows:</b> Start > Run > cmd or Start > Run > powershell
 
-<p>3. Install `pipenv` (if not already installed):</p>
+<p>4. Run the script:</p>
 
 ```
-pip3 install pipenv
-or
-pip install pipenv
-```
-<p>4. Install dependencies in a virtual envioronment:</p>
-
-```
-pipenv install
+uv run myWhoosh2Garmin.py
 ```
 
-<p>5. Activate the virtual environment:</p>
+The dependencies and the required Python version are declared at the top of the script itself, so `uv` fetches Python 3.13, `garth` and `fit_tool` into a cached environment on the first run. There is no virtual environment to create or activate.
+
+Exact versions are pinned in `myWhoosh2Garmin.py.lock`, which `uv run` picks up automatically. Two optional extras:
 
 ```
-pipenv shell
-```
-
-<p>5. Run the script:</p>
-
-```
-python3 myWhoosh2Garmin.py
-or
-python myWhoosh2Garmin.py
+uv sync --script myWhoosh2Garmin.py   # install everything up front instead of on first run
+uv run --locked myWhoosh2Garmin.py    # fail instead of re-resolving if the lock is stale
 ```
   
-<p>6. Choose your backup folder.</p>
+<p>5. Choose your backup folder.</p>
 
 <h3>MacOS</h3>
 
@@ -56,7 +58,7 @@ python myWhoosh2Garmin.py
 
 ![image](https://github.com/user-attachments/assets/d1540291-4e6d-488e-9dcf-8d7b68651103)
 
-<p>7. Enter your Garmin Connect credentials</p>
+<p>6. Enter your Garmin Connect credentials</p>
 
 ```
 2024-11-21 10:08:04,014 No existing session. Please log in.
@@ -67,7 +69,7 @@ Password:
 2024-11-21 10:08:37,107 Successfully authenticated!
 ```
 
-<p>8. Run the script when you're done riding or running.</p>
+<p>7. Run the script when you're done riding or running.</p>
 
 ```
 2024-11-21 10:08:37,107 Checking for .fit files in directory: <YOUR_MYWHOOSH_DIR_WITH_FITFILES>.
@@ -78,7 +80,7 @@ Password:
 2024-11-21 10:08:38,408 Duplicate activity found on Garmin Connect.
 ```
 
-<p>(9. Or see below to automate the process)</p>
+<p>(8. Or see below to automate the process)</p>
 
 <h2>ℹ️ Automation tips</h2> 
 
@@ -136,7 +138,7 @@ while ($process = ps -ax | grep -i $myWhooshApp | grep -v "grep") {
 
 # Run the Python script
 Write-Host "$myWhooshApp has finished, running Python script..."
-python3 "<PATH_WHERE_YOUR_SCRIPT_IS_LOCATED>/MyWhoosh2Garmin/myWhoosh2Garmin.py"
+uv run "<PATH_WHERE_YOUR_SCRIPT_IS_LOCATED>/MyWhoosh2Garmin/myWhoosh2Garmin.py"
 ```
 
 AppleScript (need to test further)
@@ -190,7 +192,7 @@ while (Get-Process -Name "mywhoosh" -ErrorAction SilentlyContinue) {
 
 # Run the Python script
 Write-Host "mywhoosh has finished, running Python script..."
-python "C:\Path\to\myWhoosh2Garmin.py"
+uv run "C:\Path\to\myWhoosh2Garmin.py"
 ```
 
 <h2>💻 Built with</h2>

@@ -41,4 +41,4 @@ while ($process = ps -ax | grep -i $myWhooshApp | grep -v "grep") {
 
 # Run the Python script
 Write-Host "$myWhooshApp has finished, running Python script..."
-python3 /Users/jayqueue/Development/Python/MyWhoosh2Garmin/myWhoosh2Garmin.py
+uv run /Users/jayqueue/Development/Python/MyWhoosh2Garmin/myWhoosh2Garmin.py
