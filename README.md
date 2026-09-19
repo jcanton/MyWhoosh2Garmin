@@ -2,9 +2,9 @@
 
 <h2>🧐Features</h2>
 
-*   Finds the .fit files from your MyWhoosh installation.
-*   Falls back to converting MyWhoosh's .gpx export when no .fit file is written (MyWhoosh 6.2.0 was seen writing MyNewActivity-&lt;version&gt;.gpx instead).
-*   Fix the missing power & heart rate averages.
+*   Finds the most recent activity export from your MyWhoosh installation, .fit or .gpx.
+*   Converts the .gpx export into a .fit file when that is the newer of the two. MyWhoosh 6.2.0 wrote MyNewActivity-&lt;version&gt;.gpx for one ride and MyNewActivity-&lt;version&gt;.fit for the next, so both can sit in the folder at once and the older one must not win.
+*   Fix the missing power & heart rate averages. MyWhoosh 6.2.0 fills these in itself, in which case they are left as they are.
 *   Removes the temperature.
 *   Create a backup file to a folder you select.
 *   Uploads the fixed .fit file to Garmin Connect.

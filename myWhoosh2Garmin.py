@@ -575,83 +575,76 @@ def resolve_backup_target(source_file: Path) -> Optional[Path]:
     return BACKUP_FITFILE_LOCATION / generate_new_filename(source_file)
 
 
-def cleanup_and_save_fit_file(fitfile_location: Path) -> Optional[Path]:
+def get_most_recent_activity_file(fitfile_location: Path) -> Optional[Path]:
     """
-    Clean up the most recent .fit file in a directory and save it
-    with a timestamped filename.
+    Return the most recently written MyWhoosh export, .fit or .gpx.
+
+    Both can sit in the directory at once: MyWhoosh 6.2.0 wrote a .gpx for
+    one ride and a .fit for the next, leaving the older file in place. The
+    newer file is the ride that has not been uploaded yet, so preferring
+    one extension outright would re-upload a stale activity. A .fit wins
+    only when the two carry the same timestamp.
 
     Args:
-        fitfile_location (Path): The directory containing the .fit files.
+        fitfile_location (Path): The directory containing the exports.
 
     Returns:
-        Optional[Path]: The path to the newly saved and cleaned .fit file,
-        or None if no .fit file is found or if the path is invalid.
+        Optional[Path]: The newest export, or None if there is none.
+    """
+    candidates = [f for f in (get_most_recent_fit_file(fitfile_location),
+                              get_most_recent_gpx_file(fitfile_location))
+                  if f is not None]
+    if not candidates:
+        return None
+    return max(candidates,
+               key=lambda f: (f.stat().st_mtime, f.suffix == ".fit"))
+
+
+def cleanup_and_save_activity_file(fitfile_location: Path) -> Optional[Path]:
+    """
+    Clean up the most recent activity file in a directory and save it as a
+    .fit file with a timestamped filename.
+
+    A .fit export is cleaned in place; a .gpx export is converted first,
+    since MyWhoosh does not always write a .fit file.
+
+    Args:
+        fitfile_location (Path): The directory containing the exports.
+
+    Returns:
+        Optional[Path]: The path to the newly saved .fit file, or None if
+        no export is found or if the path is invalid.
     """
     if not fitfile_location.is_dir():
         logger.info(f"The specified path is not a directory:"
                     f"{fitfile_location}.")
         return None
 
-    logger.debug(f"Checking for .fit files in directory: {fitfile_location}.")
-    fit_file = get_most_recent_fit_file(fitfile_location)
+    logger.debug(f"Checking for activity files in directory: "
+                 f"{fitfile_location}.")
+    activity_file = get_most_recent_activity_file(fitfile_location)
 
-    if not fit_file:
-        logger.info("No .fit files found.")
+    if not activity_file:
+        logger.info("No .fit or .gpx files found.")
         return None
 
-    logger.debug(f"Found the most recent .fit file: {fit_file.name}.")
-    new_file_path = resolve_backup_target(fit_file)
+    logger.debug(f"Found the most recent activity file: {activity_file.name}.")
+    new_file_path = resolve_backup_target(activity_file)
     if new_file_path is None:
         return None
 
     logger.info(f"Cleaning up {new_file_path}.")
 
     try:
-        cleanup_fit_file(fit_file, new_file_path)
-        logger.info(f"Successfully cleaned {fit_file.name} "
+        if activity_file.suffix == ".fit":
+            cleanup_fit_file(activity_file, new_file_path)
+        else:
+            convert_gpx_to_fit(activity_file, new_file_path)
+        logger.info(f"Successfully cleaned {activity_file.name} "
                     f"and saved it as {new_file_path.name}.")
         return new_file_path
     except Exception as e:
-        logger.error(f"Failed to process {fit_file.name}: {e}.")
-        return None
-
-
-def convert_and_save_gpx_file(fitfile_location: Path) -> Optional[Path]:
-    """
-    Convert the most recent .gpx file in a directory into a .fit file and
-    save it with a timestamped filename.
-
-    MyWhoosh 6.2.0 was seen writing MyNewActivity-<version>.gpx instead of
-    the .fit file earlier versions produced. This is the fallback for that
-    case; when a .fit file is present it is used in preference.
-
-    Args:
-        fitfile_location (Path): The directory containing the .gpx files.
-
-    Returns:
-        Optional[Path]: The path to the newly written .fit file, or None if
-        no .gpx file is found or the conversion fails.
-    """
-    if not fitfile_location.is_dir():
-        logger.info(f"The specified path is not a directory:"
-                    f"{fitfile_location}.")
-        return None
-
-    gpx_file = get_most_recent_gpx_file(fitfile_location)
-    if not gpx_file:
-        logger.info("No .gpx files found either.")
-        return None
-
-    logger.debug(f"Found the most recent .gpx file: {gpx_file.name}.")
-    new_file_path = resolve_backup_target(gpx_file)
-    if new_file_path is None:
-        return None
-
-    try:
-        convert_gpx_to_fit(gpx_file, new_file_path)
-        return new_file_path
-    except Exception as e:
-        logger.error(f"Failed to convert {gpx_file.name}: {e}.")
+        logger.error(f"Failed to process {activity_file.name}: {e}.")
         return None
 
 
@@ -685,9 +678,7 @@ def main():
         None
     """
     authenticate_to_garmin()
-    new_file_path = cleanup_and_save_fit_file(FITFILE_LOCATION)
-    if new_file_path is None:
-        new_file_path = convert_and_save_gpx_file(FITFILE_LOCATION)
+    new_file_path = cleanup_and_save_activity_file(FITFILE_LOCATION)
     if new_file_path:
         upload_fit_file_to_garmin(new_file_path)
 
