@@ -23,9 +23,11 @@ Credits:        Garth by matin - for authenticating and uploading with
 """
 import os
 import json
+import math
 import sys
 import logging
 import re
+import xml.etree.ElementTree as ET
 from typing import List, Optional
 #import tkinter as tk
 #from tkinter import filedialog
@@ -44,6 +46,17 @@ from fit_tool.profile.messages.record_message import (
 )
 from fit_tool.profile.messages.session_message import SessionMessage
 from fit_tool.profile.messages.lap_message import LapMessage
+from fit_tool.profile.messages.activity_message import ActivityMessage
+from fit_tool.profile.profile_type import (
+    Activity,
+    Event,
+    EventType,
+    FileType,
+    LapTrigger,
+    SessionTrigger,
+    Sport,
+    SubSport
+)
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -61,6 +74,9 @@ TOKENS_PATH = SCRIPT_DIR / '.garth'
 FILE_DIALOG_TITLE = "MyWhoosh2Garmin"
 # Fix for https://github.com/JayQueue/MyWhoosh2Garmin/issues/2
 MYWHOOSH_PREFIX_WINDOWS = "MyWhooshTechnologyService."
+GPX_NS = "{http://www.topografix.com/GPX/1/1}"
+TPX_NS = "{http://www.garmin.com/xmlschemas/TrackPointExtension/v1}"
+EARTH_RADIUS_M = 6371000.0
 
 
 def get_fitfile_location() -> Path:
@@ -305,6 +321,223 @@ def cleanup_fit_file(fit_file_path: Path, new_file_path: Path) -> None:
     logger.info(f"Cleaned-up file saved as {SCRIPT_DIR}/{new_file_path.name}")
 
 
+def haversine_distance(start: tuple, end: tuple) -> float:
+    """
+    Great-circle distance in metres between two (lat, lon) pairs in degrees.
+
+    Args:
+        start (tuple): The (latitude, longitude) of the first point.
+        end (tuple): The (latitude, longitude) of the second point.
+
+    Returns:
+        float: The distance in metres.
+    """
+    lat1, lon1 = start
+    lat2, lon2 = end
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    delta_phi = math.radians(lat2 - lat1)
+    delta_lambda = math.radians(lon2 - lon1)
+    a = (math.sin(delta_phi / 2) ** 2
+         + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2) ** 2)
+    return 2 * EARTH_RADIUS_M * math.asin(math.sqrt(a))
+
+
+def parse_gpx_trackpoints(gpx_file_path: Path) -> List[dict]:
+    """
+    Read the trackpoints out of a MyWhoosh .gpx export.
+
+    MyWhoosh writes power as a bare <power> element inside <extensions>
+    rather than the namespaced <gpxtpx:pwr>, so it is read from the GPX
+    namespace. Heart rate, cadence and temperature use the Garmin
+    TrackPointExtension namespace.
+
+    Args:
+        gpx_file_path (Path): The path to the .gpx file.
+
+    Returns:
+        List[dict]: One dict per trackpoint, in file order.
+    """
+    root = ET.parse(gpx_file_path).getroot()
+    trackpoints = []
+
+    for point in root.iter(f"{GPX_NS}trkpt"):
+        time_element = point.find(f"{GPX_NS}time")
+        if time_element is None:
+            continue
+
+        timestamp = datetime.fromisoformat(
+            time_element.text.strip().replace("Z", "+00:00")
+        )
+        elevation = point.find(f"{GPX_NS}ele")
+        extensions = point.find(f"{GPX_NS}extensions")
+        power = None if extensions is None else extensions.find(f"{GPX_NS}power")
+        track_point = (None if extensions is None
+                       else extensions.find(f"{TPX_NS}TrackPointExtension"))
+
+        def reading(tag):
+            if track_point is None:
+                return None
+            element = track_point.find(f"{TPX_NS}{tag}")
+            return None if element is None else element.text
+
+        trackpoints.append({
+            "timestamp": timestamp,
+            "latitude": float(point.get("lat")),
+            "longitude": float(point.get("lon")),
+            "altitude": float(elevation.text) if elevation is not None else 0.0,
+            "power": round(float(power.text)) if power is not None else 0,
+            "heart_rate": int(reading("hr") or 0),
+            "cadence": int(reading("cad") or 0),
+        })
+
+    return trackpoints
+
+
+def convert_gpx_to_fit(gpx_file_path: Path, new_file_path: Path) -> None:
+    """
+    Build an activity .fit file from a MyWhoosh .gpx export.
+
+    Distance and speed are not recorded per trackpoint in the .gpx, so both
+    are derived from the distance between consecutive points. Temperature is
+    dropped, matching cleanup_fit_file. Averages are computed here because
+    they are the values Garmin Connect would otherwise show as empty.
+
+    Args:
+        gpx_file_path (Path): The path to the .gpx file to convert.
+        new_file_path (Path): The path to save the built .fit file to.
+
+    Returns:
+        None
+
+    Raises:
+        ValueError: If the .gpx file holds no trackpoints.
+    """
+    trackpoints = parse_gpx_trackpoints(gpx_file_path)
+    if not trackpoints:
+        raise ValueError(f"No trackpoints found in {gpx_file_path.name}")
+
+    builder = FitFileBuilder(auto_define=True)
+    start_time = round(trackpoints[0]["timestamp"].timestamp() * 1000)
+    end_time = round(trackpoints[-1]["timestamp"].timestamp() * 1000)
+
+    file_id_message = FileIdMessage()
+    file_id_message.type = FileType.ACTIVITY
+    file_id_message.manufacturer = 1
+    file_id_message.product = 1836
+    file_id_message.time_created = start_time
+    builder.add(file_id_message)
+
+    cadence_values, power_values, heart_rate_values = [], [], []
+    speed_values = []
+    distance = 0.0
+    previous = None
+
+    for point in trackpoints:
+        timestamp = round(point["timestamp"].timestamp() * 1000)
+        speed = 0.0
+        if previous is not None:
+            step = haversine_distance(
+                (previous["latitude"], previous["longitude"]),
+                (point["latitude"], point["longitude"])
+            )
+            elapsed = (point["timestamp"] - previous["timestamp"]).total_seconds()
+            distance += step
+            speed = step / elapsed if elapsed > 0 else 0.0
+
+        record_message = RecordMessage()
+        record_message.timestamp = timestamp
+        record_message.position_lat = point["latitude"]
+        record_message.position_long = point["longitude"]
+        record_message.altitude = point["altitude"]
+        record_message.distance = distance
+        record_message.speed = speed
+        record_message.power = point["power"]
+        record_message.heart_rate = point["heart_rate"]
+        record_message.cadence = point["cadence"]
+        builder.add(record_message)
+
+        cadence_values.append(point["cadence"])
+        power_values.append(point["power"])
+        heart_rate_values.append(point["heart_rate"])
+        speed_values.append(speed)
+        previous = point
+
+    elapsed_time = (trackpoints[-1]["timestamp"]
+                    - trackpoints[0]["timestamp"]).total_seconds()
+    average_speed = distance / elapsed_time if elapsed_time else 0.0
+
+    lap_message = LapMessage()
+    lap_message.message_index = 0
+    lap_message.timestamp = end_time
+    lap_message.start_time = start_time
+    lap_message.total_elapsed_time = elapsed_time
+    lap_message.total_timer_time = elapsed_time
+    lap_message.total_distance = distance
+    lap_message.avg_speed = average_speed
+    lap_message.max_speed = max(speed_values)
+    lap_message.avg_power = calculate_avg(power_values)
+    lap_message.max_power = max(power_values)
+    lap_message.avg_cadence = calculate_avg(cadence_values)
+    lap_message.max_cadence = max(cadence_values)
+    lap_message.avg_heart_rate = calculate_avg(heart_rate_values)
+    lap_message.max_heart_rate = max(heart_rate_values)
+    lap_message.event = Event.LAP
+    lap_message.event_type = EventType.STOP
+    lap_message.lap_trigger = LapTrigger.SESSION_END
+    lap_message.sport = Sport.CYCLING
+    builder.add(lap_message)
+
+    session_message = SessionMessage()
+    session_message.message_index = 0
+    session_message.timestamp = end_time
+    session_message.start_time = start_time
+    session_message.total_elapsed_time = elapsed_time
+    session_message.total_timer_time = elapsed_time
+    session_message.total_distance = distance
+    session_message.avg_speed = average_speed
+    session_message.max_speed = max(speed_values)
+    session_message.avg_power = calculate_avg(power_values)
+    session_message.max_power = max(power_values)
+    session_message.avg_cadence = calculate_avg(cadence_values)
+    session_message.max_cadence = max(cadence_values)
+    session_message.avg_heart_rate = calculate_avg(heart_rate_values)
+    session_message.max_heart_rate = max(heart_rate_values)
+    session_message.first_lap_index = 0
+    session_message.num_laps = 1
+    session_message.sport = Sport.CYCLING
+    session_message.sub_sport = SubSport.VIRTUAL_ACTIVITY
+    session_message.event = Event.SESSION
+    session_message.event_type = EventType.STOP
+    session_message.trigger = SessionTrigger.ACTIVITY_END
+    builder.add(session_message)
+
+    activity_message = ActivityMessage()
+    activity_message.timestamp = end_time
+    activity_message.total_timer_time = elapsed_time
+    activity_message.num_sessions = 1
+    activity_message.type = Activity.MANUAL
+    activity_message.event = Event.ACTIVITY
+    activity_message.event_type = EventType.STOP
+    builder.add(activity_message)
+
+    builder.build().to_file(str(new_file_path))
+    logger.info(f"Converted {gpx_file_path.name} to {new_file_path.name} "
+                f"({len(trackpoints)} records, {distance:.0f} m).")
+
+
+def get_most_recent_gpx_file(fitfile_location: Path) -> Optional[Path]:
+    """
+    Returns the most recent .gpx file based
+    on versioning in the filename.
+    """
+    gpx_files = fitfile_location.glob("MyNewActivity-*.gpx")
+    gpx_files = sorted(gpx_files, key=lambda f:
+                       tuple(map(int, re.findall(r'(\d+)',
+                                                 f.stem.split('-')[-1]))),
+                       reverse=True)
+    return gpx_files[0] if gpx_files else None
+
+
 def get_most_recent_fit_file(fitfile_location: Path) -> Optional[Path]:
     """
     Returns the most recent .fit file based
@@ -322,6 +555,24 @@ def generate_new_filename(fit_file: Path) -> str:
     """Generates a new filename with a timestamp."""
     timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     return f"{fit_file.stem}_{timestamp}.fit"
+
+
+def resolve_backup_target(source_file: Path) -> Optional[Path]:
+    """
+    Build the timestamped path to write into the backup folder.
+
+    Args:
+        source_file (Path): The activity file the name is derived from.
+
+    Returns:
+        Optional[Path]: The path to write to, or None if the backup
+        folder has gone missing.
+    """
+    if not BACKUP_FITFILE_LOCATION.exists():
+        logger.error(f"{BACKUP_FITFILE_LOCATION} does not exist."
+                     "Did you delete it?")
+        return None
+    return BACKUP_FITFILE_LOCATION / generate_new_filename(source_file)
 
 
 def cleanup_and_save_fit_file(fitfile_location: Path) -> Optional[Path]:
@@ -349,14 +600,10 @@ def cleanup_and_save_fit_file(fitfile_location: Path) -> Optional[Path]:
         return None
 
     logger.debug(f"Found the most recent .fit file: {fit_file.name}.")
-    new_filename = generate_new_filename(fit_file)
-
-    if not BACKUP_FITFILE_LOCATION.exists():
-        logger.error(f"{BACKUP_FITFILE_LOCATION} does not exist."
-                     "Did you delete it?")
+    new_file_path = resolve_backup_target(fit_file)
+    if new_file_path is None:
         return None
 
-    new_file_path = BACKUP_FITFILE_LOCATION / new_filename
     logger.info(f"Cleaning up {new_file_path}.")
 
     try:
@@ -366,6 +613,45 @@ def cleanup_and_save_fit_file(fitfile_location: Path) -> Optional[Path]:
         return new_file_path
     except Exception as e:
         logger.error(f"Failed to process {fit_file.name}: {e}.")
+        return None
+
+
+def convert_and_save_gpx_file(fitfile_location: Path) -> Optional[Path]:
+    """
+    Convert the most recent .gpx file in a directory into a .fit file and
+    save it with a timestamped filename.
+
+    MyWhoosh 6.2.0 was seen writing MyNewActivity-<version>.gpx instead of
+    the .fit file earlier versions produced. This is the fallback for that
+    case; when a .fit file is present it is used in preference.
+
+    Args:
+        fitfile_location (Path): The directory containing the .gpx files.
+
+    Returns:
+        Optional[Path]: The path to the newly written .fit file, or None if
+        no .gpx file is found or the conversion fails.
+    """
+    if not fitfile_location.is_dir():
+        logger.info(f"The specified path is not a directory:"
+                    f"{fitfile_location}.")
+        return None
+
+    gpx_file = get_most_recent_gpx_file(fitfile_location)
+    if not gpx_file:
+        logger.info("No .gpx files found either.")
+        return None
+
+    logger.debug(f"Found the most recent .gpx file: {gpx_file.name}.")
+    new_file_path = resolve_backup_target(gpx_file)
+    if new_file_path is None:
+        return None
+
+    try:
+        convert_gpx_to_fit(gpx_file, new_file_path)
+        return new_file_path
+    except Exception as e:
+        logger.error(f"Failed to convert {gpx_file.name}: {e}.")
         return None
 
 
@@ -400,6 +686,8 @@ def main():
     """
     authenticate_to_garmin()
     new_file_path = cleanup_and_save_fit_file(FITFILE_LOCATION)
+    if new_file_path is None:
+        new_file_path = convert_and_save_gpx_file(FITFILE_LOCATION)
     if new_file_path:
         upload_fit_file_to_garmin(new_file_path)
 

@@ -3,6 +3,7 @@
 <h2>🧐Features</h2>
 
 *   Finds the .fit files from your MyWhoosh installation.
+*   Falls back to converting MyWhoosh's .gpx export when no .fit file is written (MyWhoosh 6.2.0 was seen writing MyNewActivity-&lt;version&gt;.gpx instead).
 *   Fix the missing power & heart rate averages.
 *   Removes the temperature.
 *   Create a backup file to a folder you select.
