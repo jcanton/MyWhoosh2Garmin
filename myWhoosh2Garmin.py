@@ -166,7 +166,7 @@ def get_backup_path(json_file=json_file_path) -> Path:
         # root.withdraw()
         # backup_path = filedialog.askdirectory(title=f"Select {FILE_DIALOG_TITLE} "
         #                                       "Directory")
-        backup_path = "/Users/jcanton/projects/backups"
+        backup_path = "/Users/jcanton/projects/MyWhoosh2Garmin/backups"
         if not backup_path:
             logger.info("No directory selected, exiting.")
             sys.exit(1)
