@@ -318,7 +318,7 @@ def cleanup_fit_file(fit_file_path: Path, new_file_path: Path) -> None:
             lap_values, cadence_values, power_values, heart_rate_values = reset_values()
         builder.add(message)
     builder.build().to_file(str(new_file_path))
-    logger.info(f"Cleaned-up file saved as {SCRIPT_DIR}/{new_file_path.name}")
+    logger.info(f"Cleaned-up file saved as {new_file_path}")
 
 
 def haversine_distance(start: tuple, end: tuple) -> float:
