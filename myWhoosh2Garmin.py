@@ -26,7 +26,7 @@ import json
 import sys
 import logging
 import re
-from typing import List
+from typing import List, Optional
 #import tkinter as tk
 #from tkinter import filedialog
 from datetime import datetime
@@ -120,7 +120,7 @@ def get_fitfile_location() -> Path:
                 logger.error(f"Unexpected error: {e}")
     else:
         logger.error("Unsupported OS")
-        return Path()
+        sys.exit(1)
 
 
 def get_backup_path(json_file=json_file_path) -> Path:
@@ -153,7 +153,7 @@ def get_backup_path(json_file=json_file_path) -> Path:
         backup_path = "/Users/jcanton/projects/backups"
         if not backup_path:
             logger.info("No directory selected, exiting.")
-            return Path()
+            sys.exit(1)
         with open(json_file, 'w') as f:
             json.dump({'backup_path': backup_path}, f)
         logger.info(f"Backup path saved to {json_file}.")
@@ -305,7 +305,7 @@ def cleanup_fit_file(fit_file_path: Path, new_file_path: Path) -> None:
     logger.info(f"Cleaned-up file saved as {SCRIPT_DIR}/{new_file_path.name}")
 
 
-def get_most_recent_fit_file(fitfile_location: Path) -> Path:
+def get_most_recent_fit_file(fitfile_location: Path) -> Optional[Path]:
     """
     Returns the most recent .fit file based
     on versioning in the filename.
@@ -315,7 +315,7 @@ def get_most_recent_fit_file(fitfile_location: Path) -> Path:
                        tuple(map(int, re.findall(r'(\d+)',
                                                  f.stem.split('-')[-1]))),
                        reverse=True)
-    return fit_files[0] if fit_files else Path()
+    return fit_files[0] if fit_files else None
 
 
 def generate_new_filename(fit_file: Path) -> str:
@@ -324,7 +324,7 @@ def generate_new_filename(fit_file: Path) -> str:
     return f"{fit_file.stem}_{timestamp}.fit"
 
 
-def cleanup_and_save_fit_file(fitfile_location: Path) -> Path:
+def cleanup_and_save_fit_file(fitfile_location: Path) -> Optional[Path]:
     """
     Clean up the most recent .fit file in a directory and save it
     with a timestamped filename.
@@ -333,20 +333,20 @@ def cleanup_and_save_fit_file(fitfile_location: Path) -> Path:
         fitfile_location (Path): The directory containing the .fit files.
 
     Returns:
-        Path: The path to the newly saved and cleaned .fit file,
-        or an empty Path if no .fit file is found or if the path is invalid.
+        Optional[Path]: The path to the newly saved and cleaned .fit file,
+        or None if no .fit file is found or if the path is invalid.
     """
     if not fitfile_location.is_dir():
         logger.info(f"The specified path is not a directory:"
                     f"{fitfile_location}.")
-        return Path()
+        return None
 
     logger.debug(f"Checking for .fit files in directory: {fitfile_location}.")
     fit_file = get_most_recent_fit_file(fitfile_location)
 
     if not fit_file:
         logger.info("No .fit files found.")
-        return Path()
+        return None
 
     logger.debug(f"Found the most recent .fit file: {fit_file.name}.")
     new_filename = generate_new_filename(fit_file)
@@ -354,7 +354,7 @@ def cleanup_and_save_fit_file(fitfile_location: Path) -> Path:
     if not BACKUP_FITFILE_LOCATION.exists():
         logger.error(f"{BACKUP_FITFILE_LOCATION} does not exist."
                      "Did you delete it?")
-        return Path()
+        return None
 
     new_file_path = BACKUP_FITFILE_LOCATION / new_filename
     logger.info(f"Cleaning up {new_file_path}.")
@@ -366,21 +366,21 @@ def cleanup_and_save_fit_file(fitfile_location: Path) -> Path:
         return new_file_path
     except Exception as e:
         logger.error(f"Failed to process {fit_file.name}: {e}.")
-        return Path()
+        return None
 
 
-def upload_fit_file_to_garmin(new_file_path: Path):
+def upload_fit_file_to_garmin(new_file_path: Optional[Path]):
     """
     Upload a .fit file to Garmin using the Garth client.
 
     Args:
-        new_file_path (Path): The path to the .fit file to upload.
+        new_file_path (Optional[Path]): The path to the .fit file to upload.
 
     Returns:
         None
     """
     try:
-        if new_file_path and new_file_path.exists():
+        if new_file_path and new_file_path.is_file():
             with open(new_file_path, "rb") as f:
                 uploaded = garth.client.upload(f)
                 logger.debug(uploaded)
