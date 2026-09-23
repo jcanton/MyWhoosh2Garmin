@@ -1,4 +1,5 @@
 .garth/*
+.env
 *.log
 *.json
 *.lock

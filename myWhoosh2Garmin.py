@@ -4,16 +4,24 @@
 # dependencies = [
 #     "garth==0.5.2",
 #     "fit_tool==0.9.16",
+#     "requests>=2.32",
+#     "python-dotenv>=1.0",
 # ]
 # ///
 """
 Script name: myWhoosh2Garmin.py
-Usage: "uv run myWhoosh2Garmin.py"
-Description:    Checks for MyNewActivity-<myWhooshVersion>.fit
+Usage: "uv run myWhoosh2Garmin.py [--local]"
+Description:    Downloads the recent rides from the MyWhoosh cloud that are
+                not on Garmin Connect yet, or with
+                --local reads MyNewActivity-<myWhooshVersion>.fit/.gpx from
+                the app folder
                 Adds avg power and heartrade
                 Removes temperature
-                Creates backup for the file with a timestamp as a suffix
-Credits:        Garth by matin - for authenticating and uploading with
+                Saves a backup copy and uploads it to Garmin Connect
+Credits:        mywhoosh-to-garmin by marcelorodrigo - for the MyWhoosh
+                cloud API endpoints.
+                https://github.com/marcelorodrigo/mywhoosh-to-garmin
+                Garth by matin - for authenticating and uploading with
                 Garmin Connect.
                 https://github.com/matin/garth
                 Fit_tool by mtucker - for parsing the fit file.
@@ -21,21 +29,26 @@ Credits:        Garth by matin - for authenticating and uploading with
                 mw2gc by embeddedc - used as an example to fix the avg's.
                 https://github.com/embeddedc/mw2gc
 """
+import argparse
 import os
 import json
 import math
 import sys
 import logging
 import re
+import tempfile
+import uuid
 import xml.etree.ElementTree as ET
 from typing import List, Optional
 #import tkinter as tk
 #from tkinter import filedialog
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from getpass import getpass
 from pathlib import Path
 
 import garth
+import requests
+from dotenv import dotenv_values
 from garth.exc import GarthException, GarthHTTPError
 from fit_tool.fit_file import FitFile
 from fit_tool.fit_file_builder import FitFileBuilder
@@ -71,6 +84,18 @@ logger.addHandler(file_handler)
 
 
 TOKENS_PATH = SCRIPT_DIR / '.garth'
+ENV_PATH = SCRIPT_DIR / '.env'
+MYWHOOSH_LOGIN_URL = "https://services.mywhoosh.com/http-service/api/login"
+MYWHOOSH_ACTIVITIES_URL = ("https://service14.mywhoosh.com"
+                           "/v2/rider/profile/activities")
+MYWHOOSH_DOWNLOAD_URL = ("https://service14.mywhoosh.com"
+                         "/v2/rider/profile/download-activity-file")
+GARMIN_ACTIVITIES_PATH = "/activitylist-service/activities/search/activities"
+# Garmin records the same start time as MyWhoosh to the second; the margin
+# only absorbs rounding.
+SAME_RIDE_TOLERANCE = timedelta(seconds=60)
+# Only rides this recent are caught up, so old history is never queried.
+CATCH_UP_WINDOW = timedelta(days=14)
 FILE_DIALOG_TITLE = "MyWhoosh2Garmin"
 # Fix for https://github.com/JayQueue/MyWhoosh2Garmin/issues/2
 MYWHOOSH_PREFIX_WINDOWS = "MyWhooshTechnologyService."
@@ -175,7 +200,6 @@ def get_backup_path(json_file=json_file_path) -> Path:
         logger.info(f"Backup path saved to {json_file}.")
     return Path(backup_path)
 
-FITFILE_LOCATION = get_fitfile_location()
 BACKUP_FITFILE_LOCATION = get_backup_path()
 
 def get_credentials_for_garmin():
@@ -557,12 +581,12 @@ def generate_new_filename(fit_file: Path) -> str:
     return f"{fit_file.stem}_{timestamp}.fit"
 
 
-def resolve_backup_target(source_file: Path) -> Optional[Path]:
+def resolve_backup_target(filename: str) -> Optional[Path]:
     """
-    Build the timestamped path to write into the backup folder.
+    Build the path to write into the backup folder.
 
     Args:
-        source_file (Path): The activity file the name is derived from.
+        filename (str): The name of the file to write.
 
     Returns:
         Optional[Path]: The path to write to, or None if the backup
@@ -572,7 +596,7 @@ def resolve_backup_target(source_file: Path) -> Optional[Path]:
         logger.error(f"{BACKUP_FITFILE_LOCATION} does not exist."
                      "Did you delete it?")
         return None
-    return BACKUP_FITFILE_LOCATION / generate_new_filename(source_file)
+    return BACKUP_FITFILE_LOCATION / filename
 
 
 def get_most_recent_activity_file(fitfile_location: Path) -> Optional[Path]:
@@ -629,7 +653,7 @@ def cleanup_and_save_activity_file(fitfile_location: Path) -> Optional[Path]:
         return None
 
     logger.debug(f"Found the most recent activity file: {activity_file.name}.")
-    new_file_path = resolve_backup_target(activity_file)
+    new_file_path = resolve_backup_target(generate_new_filename(activity_file))
     if new_file_path is None:
         return None
 
@@ -646,6 +670,226 @@ def cleanup_and_save_activity_file(fitfile_location: Path) -> Optional[Path]:
     except Exception as e:
         logger.error(f"Failed to process {activity_file.name}: {e}.")
         return None
+
+
+def get_credentials_for_mywhoosh() -> tuple[str, str]:
+    """
+    Read the MyWhoosh email and password from .env next to the script.
+    Environment variables of the same name take precedence.
+
+    Returns:
+        tuple[str, str]: The email and password.
+
+    Exits:
+        Exits with status 1 if either is missing.
+    """
+    values = {**dotenv_values(ENV_PATH), **os.environ}
+    email = values.get("MYWHOOSH_EMAIL")
+    password = values.get("MYWHOOSH_PASSWORD")
+    if not email or not password:
+        logger.error(f"Set MYWHOOSH_EMAIL and MYWHOOSH_PASSWORD in {ENV_PATH}.")
+        sys.exit(1)
+    return email, password
+
+
+def authenticate_to_mywhoosh(email: str, password: str) -> tuple[str, str]:
+    """
+    Log in to the MyWhoosh cloud API.
+
+    MyWhoosh allows one session per account, so the login is refused while
+    the app is running.
+
+    Args:
+        email (str): The MyWhoosh account email.
+        password (str): The MyWhoosh account password.
+
+    Returns:
+        tuple[str, str]: The access token and the WhooshId.
+
+    Exits:
+        Exits with status 1 if the login is refused.
+    """
+    response = requests.post(MYWHOOSH_LOGIN_URL, json={
+        "Username": email,
+        "Password": password,
+        "Platform": "Android",
+        "Action": 1001,
+        "CorrelationId": str(uuid.uuid4()),
+        "DeviceId": str(uuid.uuid4()),
+        "Authorization": "",
+    }, timeout=30)
+    response.raise_for_status()
+    data = response.json()
+    if not data.get("Success"):
+        message = data.get("Message", "unknown error")
+        logger.error(f"MyWhoosh login failed: {message}")
+        if "already logged in" in message.lower():
+            logger.error("Quit the MyWhoosh app and run again.")
+        sys.exit(1)
+    logger.info("Authenticated to MyWhoosh.")
+    return data["AccessToken"], data["WhooshId"]
+
+
+def get_recent_mywhoosh_activities(access_token: str) -> List[dict]:
+    """
+    Fetch the most recent activities from the MyWhoosh cloud, newest first.
+
+    The API returns ten activities per page whatever limit is asked for.
+
+    Args:
+        access_token (str): The token returned by authenticate_to_mywhoosh.
+
+    Returns:
+        List[dict]: The activities, possibly empty.
+    """
+    response = requests.post(
+        MYWHOOSH_ACTIVITIES_URL,
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={"page": 1, "limit": 10, "sortDate": "DESC"},
+        timeout=30
+    )
+    response.raise_for_status()
+    return response.json()["data"]["results"]
+
+
+def mywhoosh_start_time(activity: dict) -> datetime:
+    """Return the ride's start time as an aware UTC datetime."""
+    return datetime.fromisoformat(
+        activity["startDatetime"].replace("Z", "+00:00")
+    )
+
+
+def get_garmin_start_times(ride_starts: List[datetime]) -> List[datetime]:
+    """
+    Fetch the start times of the Garmin Connect activities on the days
+    the given rides took place.
+
+    Each day is widened by a day on either side, because Garmin filters on
+    the local calendar date.
+
+    Args:
+        ride_starts (List[datetime]): The ride start times to cover.
+
+    Returns:
+        List[datetime]: The start times, as aware UTC datetimes.
+    """
+    start_times = []
+    for day in sorted({start.date() for start in ride_starts}):
+        params = {
+            "startDate": (day - timedelta(days=1)).isoformat(),
+            "endDate": (day + timedelta(days=1)).isoformat(),
+            "limit": 100,
+        }
+        fetched = 0
+        while True:
+            page = garth.connectapi(GARMIN_ACTIVITIES_PATH,
+                                    params={**params, "start": fetched})
+            fetched += len(page)
+            start_times += [
+                datetime.fromisoformat(a["startTimeGMT"])
+                .replace(tzinfo=timezone.utc)
+                for a in page
+            ]
+            if len(page) < params["limit"]:
+                break
+    return start_times
+
+
+def download_mywhoosh_activity(access_token: str, whoosh_id: str,
+                               activity: dict, target: Path) -> None:
+    """
+    Download an activity's .fit file from the MyWhoosh cloud.
+
+    The API hands back a presigned S3 URL, which is then fetched.
+
+    Args:
+        access_token (str): The token returned by authenticate_to_mywhoosh.
+        whoosh_id (str): The WhooshId returned by authenticate_to_mywhoosh.
+        activity (dict): The activity to download.
+        target (Path): Where to write the .fit file.
+
+    Returns:
+        None
+    """
+    response = requests.post(
+        MYWHOOSH_DOWNLOAD_URL,
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={"key": whoosh_id, "fileId": activity["activityFileId"]},
+        timeout=30
+    )
+    response.raise_for_status()
+    fit_response = requests.get(response.json()["data"], timeout=60)
+    fit_response.raise_for_status()
+    target.write_bytes(fit_response.content)
+
+
+def mywhoosh_activity_filename(activity: dict) -> str:
+    """
+    Name the backup after the ride's local start time, so re-running for
+    the same ride overwrites its backup instead of adding another.
+    """
+    start = mywhoosh_start_time(activity).astimezone()
+    return f"MyWhoosh_{start:%Y-%m-%d_%H%M%S}.fit"
+
+
+def fetch_and_save_new_activities() -> List[Path]:
+    """
+    Download the MyWhoosh rides from the last CATCH_UP_WINDOW that are not
+    on Garmin Connect yet, clean them up and save them into the backup
+    folder.
+
+    A ride counts as already uploaded when Garmin has an activity starting
+    at the same time. Garmin's own duplicate check compares files, and the
+    cleaned file differs from one uploaded any other way, so it would let
+    such a ride through twice.
+
+    Garmin must be authenticated before this is called.
+
+    Returns:
+        List[Path]: The saved .fit files, oldest ride first.
+    """
+    email, password = get_credentials_for_mywhoosh()
+    try:
+        access_token, whoosh_id = authenticate_to_mywhoosh(email, password)
+        cutoff = datetime.now(timezone.utc) - CATCH_UP_WINDOW
+        recent = sorted(
+            ((a, mywhoosh_start_time(a))
+             for a in get_recent_mywhoosh_activities(access_token)),
+            key=lambda pair: pair[1]
+        )
+        recent = [(a, start) for a, start in recent if start >= cutoff]
+        if not recent:
+            logger.info(f"No MyWhoosh activities in the last "
+                        f"{CATCH_UP_WINDOW.days} days.")
+            return []
+
+        garmin_starts = get_garmin_start_times([start for _, start in recent])
+
+        saved = []
+        for activity, start in recent:
+            label = f"{activity['title']} ({activity['startDatetime']})"
+            if any(abs(start - g) <= SAME_RIDE_TOLERANCE
+                   for g in garmin_starts):
+                logger.info(f"Already on Garmin Connect: {label}.")
+                continue
+
+            logger.info(f"New MyWhoosh activity: {label}.")
+            new_file_path = resolve_backup_target(
+                mywhoosh_activity_filename(activity)
+            )
+            if new_file_path is None:
+                return saved
+
+            with tempfile.TemporaryDirectory() as download_dir:
+                downloaded = Path(download_dir) / new_file_path.name
+                download_mywhoosh_activity(access_token, whoosh_id,
+                                           activity, downloaded)
+                cleanup_fit_file(downloaded, new_file_path)
+            saved.append(new_file_path)
+        return saved
+    except requests.RequestException as e:
+        logger.error(f"Fetching activities failed: {e}")
+        return []
 
 
 def upload_fit_file_to_garmin(new_file_path: Optional[Path]):
@@ -671,15 +915,29 @@ def upload_fit_file_to_garmin(new_file_path: Optional[Path]):
 
 def main():
     """
-    Main function to authenticate to Garmin, clean and save the FIT file,
-    and upload it to Garmin.
+    Main function to authenticate to Garmin, fetch, clean and save the
+    FIT file, and upload it to Garmin.
 
     Returns:
         None
     """
+    parser = argparse.ArgumentParser(
+        description="Upload recent MyWhoosh rides to Garmin Connect."
+    )
+    parser.add_argument(
+        "--local", action="store_true",
+        help="read the newest export from the MyWhoosh app folder "
+             "instead of downloading it from the MyWhoosh cloud"
+    )
+    args = parser.parse_args()
+
     authenticate_to_garmin()
-    new_file_path = cleanup_and_save_activity_file(FITFILE_LOCATION)
-    if new_file_path:
+    if args.local:
+        new_file_path = cleanup_and_save_activity_file(get_fitfile_location())
+        new_file_paths = [new_file_path] if new_file_path else []
+    else:
+        new_file_paths = fetch_and_save_new_activities()
+    for new_file_path in new_file_paths:
         upload_fit_file_to_garmin(new_file_path)
 
 
