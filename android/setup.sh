@@ -48,6 +48,9 @@ cp android/icon.png ~/.shortcuts/icons/MyWhoosh2Garmin.png
 chmod -R a-x,u=rwX,go-rwx ~/.shortcuts/icons
 
 echo
+echo "To put the icon on the home screen, run this and pick MyWhoosh2Garmin:"
+echo "  am start -n com.termux.widget/.TermuxCreateShortcutActivity"
+echo
 echo "Setup done. Now running a first sync: Garmin Connect asks for your"
 echo "login once, then the session is kept in $REPO/.garth."
 echo
