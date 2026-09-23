@@ -238,7 +238,7 @@ bash android/setup.sh
 
 The setup installs Python and the pinned dependencies into `.venv`, asks for your MyWhoosh email and password and stores them in `.env`, and adds the `MyWhoosh2Garmin` shortcut. The first time, it compiles `pydantic-core` with Rust, which takes 10-15 minutes. It then runs a first sync, where Garmin Connect asks for your login once.
 
-<p>3. Add <b>MyWhoosh2Garmin</b> to the home screen as a launcher shortcut, which looks like a normal app icon, rather than as the list widget. Either long-press the Termux:Widget app icon and drag <b>MyWhoosh2Garmin</b> out, or pick Termux:Widget's 1x1 shortcut in the widget list. The icon comes from <code>~/.shortcuts/icons/MyWhoosh2Garmin.png</code>, which the setup installs; a shortcut added before the icon existed keeps the default one, so remove it and add it again.</p>
+<p>3. Open the <b>Termux:Widget</b> app and tap <b>CREATE SHORTCUTS</b>. Then long-press the Termux:Widget app icon: <b>MyWhoosh2Garmin</b> appears in its menu, with the icon from <code>android/icon.png</code>. Drag it onto the home screen, where it behaves like a normal app icon. Tap <b>CREATE SHORTCUTS</b> again whenever the icon changes; a shortcut already on the home screen keeps the icon it was created with, so remove it and drag it out again. The list widget in the widget picker shows the same script as a text entry.</p>
 
 <p>4. After a ride, close MyWhoosh (swipe it away from recent apps) and tap the icon. The window shows the log and stays open until you press a key.</p>
 

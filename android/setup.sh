@@ -33,10 +33,15 @@ if [ ! -s .env ]; then
 fi
 
 echo "==> Adding the home-screen shortcut"
-mkdir -p ~/.shortcuts
-printf '#!/data/data/com.termux/files/usr/bin/bash\nexec bash "%s/android/run.sh" "$@"\n' \
-    "$REPO" > ~/.shortcuts/MyWhoosh2Garmin
-chmod 700 ~/.shortcuts/MyWhoosh2Garmin
+# ~/.shortcuts feeds the Termux:Widget list widget; dynamic_shortcuts feeds
+# the app shortcuts shown when long-pressing the Termux:Widget app icon,
+# which can be dragged out as a normal launcher icon.
+for dir in ~/.shortcuts ~/.termux/widget/dynamic_shortcuts; do
+    mkdir -p "$dir"
+    printf '#!/data/data/com.termux/files/usr/bin/bash\nexec bash "%s/android/run.sh" "$@"\n' \
+        "$REPO" > "$dir/MyWhoosh2Garmin"
+    chmod 700 "$dir/MyWhoosh2Garmin"
+done
 # Termux:Widget uses ~/.shortcuts/icons/<script name>.png as the icon.
 mkdir -p ~/.shortcuts/icons
 cp android/icon.png ~/.shortcuts/icons/MyWhoosh2Garmin.png
