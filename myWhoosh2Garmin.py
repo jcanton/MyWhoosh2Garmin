@@ -581,7 +581,7 @@ def generate_new_filename(fit_file: Path) -> str:
     return f"{fit_file.stem}_{timestamp}.fit"
 
 
-def resolve_backup_target(filename: str) -> Optional[Path]:
+def resolve_backup_target(filename: str) -> Path:
     """
     Build the path to write into the backup folder.
 
@@ -589,13 +589,15 @@ def resolve_backup_target(filename: str) -> Optional[Path]:
         filename (str): The name of the file to write.
 
     Returns:
-        Optional[Path]: The path to write to, or None if the backup
-        folder has gone missing.
+        Path: The path to write to.
+
+    Exits:
+        Exits with status 1 if the backup folder has gone missing.
     """
     if not BACKUP_FITFILE_LOCATION.exists():
-        logger.error(f"{BACKUP_FITFILE_LOCATION} does not exist."
+        logger.error(f"{BACKUP_FITFILE_LOCATION} does not exist. "
                      "Did you delete it?")
-        return None
+        sys.exit(1)
     return BACKUP_FITFILE_LOCATION / filename
 
 
@@ -637,12 +639,16 @@ def cleanup_and_save_activity_file(fitfile_location: Path) -> Optional[Path]:
 
     Returns:
         Optional[Path]: The path to the newly saved .fit file, or None if
-        no export is found or if the path is invalid.
+        no export is found.
+
+    Exits:
+        Exits with status 1 if the path is invalid or the export cannot be
+        processed.
     """
     if not fitfile_location.is_dir():
-        logger.info(f"The specified path is not a directory:"
-                    f"{fitfile_location}.")
-        return None
+        logger.error(f"The specified path is not a directory: "
+                     f"{fitfile_location}.")
+        sys.exit(1)
 
     logger.debug(f"Checking for activity files in directory: "
                  f"{fitfile_location}.")
@@ -654,9 +660,6 @@ def cleanup_and_save_activity_file(fitfile_location: Path) -> Optional[Path]:
 
     logger.debug(f"Found the most recent activity file: {activity_file.name}.")
     new_file_path = resolve_backup_target(generate_new_filename(activity_file))
-    if new_file_path is None:
-        return None
-
     logger.info(f"Cleaning up {new_file_path}.")
 
     try:
@@ -669,7 +672,7 @@ def cleanup_and_save_activity_file(fitfile_location: Path) -> Optional[Path]:
         return new_file_path
     except Exception as e:
         logger.error(f"Failed to process {activity_file.name}: {e}.")
-        return None
+        sys.exit(1)
 
 
 def get_credentials_for_mywhoosh() -> tuple[str, str]:
@@ -847,76 +850,80 @@ def fetch_and_save_new_activities() -> List[Path]:
 
     Returns:
         List[Path]: The saved .fit files, oldest ride first.
+
+    Raises:
+        requests.RequestException: If MyWhoosh cannot be reached.
+        GarthException: If Garmin Connect cannot be queried.
     """
     email, password = get_credentials_for_mywhoosh()
-    try:
-        access_token, whoosh_id = authenticate_to_mywhoosh(email, password)
-        cutoff = datetime.now(timezone.utc) - CATCH_UP_WINDOW
-        recent = sorted(
-            ((a, mywhoosh_start_time(a))
-             for a in get_recent_mywhoosh_activities(access_token)),
-            key=lambda pair: pair[1]
-        )
-        recent = [(a, start) for a, start in recent if start >= cutoff]
-        if not recent:
-            logger.info(f"No MyWhoosh activities in the last "
-                        f"{CATCH_UP_WINDOW.days} days.")
-            return []
-
-        garmin_starts = get_garmin_start_times([start for _, start in recent])
-
-        saved = []
-        for activity, start in recent:
-            label = f"{activity['title']} ({activity['startDatetime']})"
-            if any(abs(start - g) <= SAME_RIDE_TOLERANCE
-                   for g in garmin_starts):
-                logger.info(f"Already on Garmin Connect: {label}.")
-                continue
-
-            logger.info(f"New MyWhoosh activity: {label}.")
-            new_file_path = resolve_backup_target(
-                mywhoosh_activity_filename(activity)
-            )
-            if new_file_path is None:
-                return saved
-
-            with tempfile.TemporaryDirectory() as download_dir:
-                downloaded = Path(download_dir) / new_file_path.name
-                download_mywhoosh_activity(access_token, whoosh_id,
-                                           activity, downloaded)
-                cleanup_fit_file(downloaded, new_file_path)
-            saved.append(new_file_path)
-        return saved
-    except requests.RequestException as e:
-        logger.error(f"Fetching activities failed: {e}")
+    access_token, whoosh_id = authenticate_to_mywhoosh(email, password)
+    cutoff = datetime.now(timezone.utc) - CATCH_UP_WINDOW
+    recent = sorted(
+        ((a, mywhoosh_start_time(a))
+         for a in get_recent_mywhoosh_activities(access_token)),
+        key=lambda pair: pair[1]
+    )
+    recent = [(a, start) for a, start in recent if start >= cutoff]
+    if not recent:
+        logger.info(f"No MyWhoosh activities in the last "
+                    f"{CATCH_UP_WINDOW.days} days.")
         return []
 
+    garmin_starts = get_garmin_start_times([start for _, start in recent])
 
-def upload_fit_file_to_garmin(new_file_path: Optional[Path]):
+    saved = []
+    for activity, start in recent:
+        label = f"{activity['title']} ({activity['startDatetime']})"
+        if any(abs(start - g) <= SAME_RIDE_TOLERANCE
+               for g in garmin_starts):
+            logger.info(f"Already on Garmin Connect: {label}.")
+            continue
+
+        logger.info(f"New MyWhoosh activity: {label}.")
+        new_file_path = resolve_backup_target(
+            mywhoosh_activity_filename(activity)
+        )
+        with tempfile.TemporaryDirectory() as download_dir:
+            downloaded = Path(download_dir) / new_file_path.name
+            download_mywhoosh_activity(access_token, whoosh_id,
+                                       activity, downloaded)
+            cleanup_fit_file(downloaded, new_file_path)
+        saved.append(new_file_path)
+    return saved
+
+
+def upload_fit_file_to_garmin(new_file_path: Path) -> bool:
     """
     Upload a .fit file to Garmin using the Garth client.
 
     Args:
-        new_file_path (Optional[Path]): The path to the .fit file to upload.
+        new_file_path (Path): The path to the .fit file to upload.
 
     Returns:
-        None
+        bool: True if the file was uploaded or Garmin already had it,
+        False if the upload failed.
     """
     try:
-        if new_file_path and new_file_path.is_file():
-            with open(new_file_path, "rb") as f:
-                uploaded = garth.client.upload(f)
-                logger.debug(uploaded)
-        else:
-            logger.info(f"Invalid file path: {new_file_path}.")
-    except GarthHTTPError:
-        logger.info("Duplicate activity found on Garmin Connect.")
+        with open(new_file_path, "rb") as f:
+            uploaded = garth.client.upload(f)
+            logger.debug(uploaded)
+        return True
+    except GarthHTTPError as e:
+        response = e.error.response
+        if response is not None and response.status_code == 409:
+            logger.info("Duplicate activity found on Garmin Connect.")
+            return True
+        logger.error(f"Uploading {new_file_path.name} failed: {e}")
+        return False
 
 
 def main():
     """
     Main function to authenticate to Garmin, fetch, clean and save the
     FIT file, and upload it to Garmin.
+
+    Exits with status 0 when the run completes, including when there is
+    nothing new to upload, and with status 1 when any step fails.
 
     Returns:
         None
@@ -936,9 +943,15 @@ def main():
         new_file_path = cleanup_and_save_activity_file(get_fitfile_location())
         new_file_paths = [new_file_path] if new_file_path else []
     else:
-        new_file_paths = fetch_and_save_new_activities()
-    for new_file_path in new_file_paths:
-        upload_fit_file_to_garmin(new_file_path)
+        try:
+            new_file_paths = fetch_and_save_new_activities()
+        except (requests.RequestException, GarthException) as e:
+            logger.error(f"Fetching activities failed: {e}")
+            sys.exit(1)
+
+    results = [upload_fit_file_to_garmin(path) for path in new_file_paths]
+    if not all(results):
+        sys.exit(1)
 
 
 if __name__ == "__main__":
