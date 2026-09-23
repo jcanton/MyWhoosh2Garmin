@@ -1,5 +1,6 @@
 .garth/*
 .env
+.venv/
 *.log
 *.json
 *.lock

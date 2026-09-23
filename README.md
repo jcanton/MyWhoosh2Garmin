@@ -221,6 +221,35 @@ Write-Host "mywhoosh has finished, running Python script..."
 uv run "C:\Path\to\myWhoosh2Garmin.py"
 ```
 
+<h2>📱 Android</h2>
+
+The script runs in <a href="https://termux.dev">Termux</a>, started from a home-screen icon that opens a window with the log. Because rides come from the MyWhoosh cloud, it works whichever device you rode on.
+
+<p>1. Install <b>Termux</b> and <b>Termux:Widget</b> from <a href="https://f-droid.org/packages/com.termux/">F-Droid</a>. Take both from the same source: Termux plugins only work with a Termux installed from the same place.</p>
+
+<p>2. In Termux, clone the repository and run the setup:</p>
+
+```
+pkg install git
+git clone https://github.com/jcanton/MyWhoosh2Garmin.git
+cd MyWhoosh2Garmin
+bash android/setup.sh
+```
+
+The setup installs Python and the pinned dependencies into `.venv`, asks for your MyWhoosh email and password and stores them in `.env`, and adds the `MyWhoosh2Garmin` shortcut. The first time, it compiles `pydantic-core` with Rust, which takes 10-15 minutes. It then runs a first sync, where Garmin Connect asks for your login once.
+
+<p>3. Long-press the home screen, open <b>Widgets</b>, drag <b>Termux:Widget</b>'s single-shortcut widget onto the home screen and pick <b>MyWhoosh2Garmin</b>.</p>
+
+<p>4. After a ride, close MyWhoosh (swipe it away from recent apps) and tap the icon. The window shows the log and stays open until you press a key.</p>
+
+To update, run `git pull` in the checkout, then `bash android/setup.sh` again. It keeps your `.env` and only installs what changed.
+
+`android/requirements.txt` pins the same versions as `myWhoosh2Garmin.py.lock`, with hashes, because `uv` has no Android build. After changing the dependencies, regenerate it with:
+
+```
+uv export --script myWhoosh2Garmin.py --no-header -o android/requirements.txt
+```
+
 <h2>💻 Built with</h2>
 
 Technologies used in the project:

@@ -1,0 +1,45 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# One-time setup of MyWhoosh2Garmin in Termux, run from the repo checkout:
+#   bash android/setup.sh
+# Safe to re-run: it keeps an existing .env and virtual environment.
+set -euo pipefail
+
+REPO="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+cd "$REPO"
+
+echo "==> Installing Python, and Rust to build pydantic-core"
+pkg install -y python rust
+
+if [ ! -x .venv/bin/python ]; then
+    echo "==> Creating the virtual environment"
+    python -m venv .venv
+fi
+
+echo "==> Installing the pinned dependencies"
+echo "    The first time, compiling pydantic-core takes 10-15 minutes."
+.venv/bin/pip install --require-hashes -r android/requirements.txt
+
+if [ ! -s .env ]; then
+    echo "==> MyWhoosh credentials, stored in $REPO/.env"
+    read -r -p "MyWhoosh email: " email
+    read -r -s -p "MyWhoosh password: " password
+    echo
+    # Single-quoted values are taken literally by python-dotenv, once
+    # backslashes and single quotes are escaped.
+    password=${password//\\/\\\\}
+    password=${password//\'/\\\'}
+    (umask 077 && printf "MYWHOOSH_EMAIL=%s\nMYWHOOSH_PASSWORD='%s'\n" \
+        "$email" "$password" > .env)
+fi
+
+echo "==> Adding the home-screen shortcut"
+mkdir -p ~/.shortcuts
+printf '#!/data/data/com.termux/files/usr/bin/bash\nexec bash "%s/android/run.sh" "$@"\n' \
+    "$REPO" > ~/.shortcuts/MyWhoosh2Garmin
+chmod 700 ~/.shortcuts/MyWhoosh2Garmin
+
+echo
+echo "Setup done. Now running a first sync: Garmin Connect asks for your"
+echo "login once, then the session is kept in $REPO/.garth."
+echo
+exec bash android/run.sh

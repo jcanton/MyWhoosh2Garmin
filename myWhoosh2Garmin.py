@@ -191,10 +191,8 @@ def get_backup_path(json_file=json_file_path) -> Path:
         # root.withdraw()
         # backup_path = filedialog.askdirectory(title=f"Select {FILE_DIALOG_TITLE} "
         #                                       "Directory")
-        backup_path = "/Users/jcanton/projects/MyWhoosh2Garmin/backups"
-        if not backup_path:
-            logger.info("No directory selected, exiting.")
-            sys.exit(1)
+        backup_path = str(SCRIPT_DIR / "backups")
+        os.makedirs(backup_path, exist_ok=True)
         with open(json_file, 'w') as f:
             json.dump({'backup_path': backup_path}, f)
         logger.info(f"Backup path saved to {json_file}.")
@@ -686,7 +684,7 @@ def get_credentials_for_mywhoosh() -> tuple[str, str]:
     Exits:
         Exits with status 1 if either is missing.
     """
-    values = {**dotenv_values(ENV_PATH), **os.environ}
+    values = {**dotenv_values(ENV_PATH, interpolate=False), **os.environ}
     email = values.get("MYWHOOSH_EMAIL")
     password = values.get("MYWHOOSH_PASSWORD")
     if not email or not password:
